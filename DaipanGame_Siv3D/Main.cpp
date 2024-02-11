@@ -1,105 +1,140 @@
-﻿# include <Siv3D.hpp> // Siv3D v0.6.14
+﻿# include <Siv3D.hpp>
+
+/// @brief パンのクラスです。
+struct Bread
+{
+	/// @brief パンのボディです。
+	P2Body body;
+
+	/// @brief パンのIDです。
+	P2BodyID id;
+
+	/// @brief パンの種類です。
+	int32 level;
+};
 
 void Main()
 {
-	// 背景の色を設定する | Set the background color
-	Scene::SetBackground(ColorF{ 0.6, 0.8, 0.7 });
+	// ウィンドウを 1280x720 にリサイズする
+	Window::Resize(1280, 720);
 
-	// 画像ファイルからテクスチャを作成する | Create a texture from an image file
-	const Texture texture{ U"example/windmill.png" };
+	// 2D 物理演算のシミュレーションステップ（秒）
+	constexpr double StepTime = (1.0 / 200.0);
 
-	// 絵文字からテクスチャを作成する | Create a texture from an emoji
-	const Texture emoji{ U"🦖"_emoji };
+	// 2D 物理演算のシミュレーション蓄積時間（秒）
+	double accumulatedTime = 0.0;
 
-	// 太文字のフォントを作成する | Create a bold font with MSDF method
-	const Font font{ FontMethod::MSDF, 48, Typeface::Bold };
+	// 重力加速度 (cm/s^2)
+	constexpr double Gravity = 980;
 
-	// テキストに含まれる絵文字のためのフォントを作成し、font に追加する | Create a font for emojis in text and add it to font as a fallback
-	const Font emojiFont{ 48, Typeface::ColorEmoji };
-	font.addFallback(emojiFont);
+	// 2D 物理演算のワールド
+	P2World world{ Gravity };
 
-	// ボタンを押した回数 | Number of button presses
-	int32 count = 0;
+	// ステージのボディ (1辺 400 cm ）
+	const P2Body stage = world.createLineString(P2Static, Vec2{ 0, 0 }, { Vec2{-200, -400}, Vec2{-200, 0}, Vec2{200, 0}, {Vec2{200, -400}} });
 
-	// チェックボックスの状態 | Checkbox state
-	bool checked = false;
+	// ステージのボディID
+	const P2BodyID stageID = stage.id();
 
-	// プレイヤーの移動スピード | Player's movement speed
+	// パンの配列
+	Array<Bread> breads;
+
+	// パンの落下開始位置
+	Vec2 dropPos{ 0,-500 };
+
+	// パンの落下開始位置の左右移動速度
 	double speed = 200.0;
 
-	// プレイヤーの X 座標 | Player's X position
-	double playerPosX = 400;
+	// カメラの表示倍率です
+	double cameraScale = 1.0;
 
-	// プレイヤーが右を向いているか | Whether player is facing right
-	bool isPlayerFacingRight = true;
+	// 2D カメラ
+	Camera2D camera{ Vec2{ 0, -300 }, cameraScale, CameraControl::None_ };
 
+	// テクスチャからポリゴン生成
+	const Texture plainBreadTexture{ U"🍞"_emoji };
+	const MultiPolygon plainBreadPolygon = Emoji::CreateImage(U"🍞").alphaToPolygonsCentered().simplified(2.0);
+
+	const Texture croissantTexture{ U"🥐"_emoji };
+	const MultiPolygon croissantPolygon = Emoji::CreateImage(U"🥐").alphaToPolygonsCentered().simplified(2.0);
+
+	// メインループ
 	while (System::Update())
 	{
-		// テクスチャを描く | Draw the texture
-		texture.draw(20, 20);
+		double deltaTime = Scene::DeltaTime();
 
-		// テキストを描く | Draw text
-		font(U"Hello, Siv3D!🎮").draw(64, Vec2{ 20, 340 }, ColorF{ 0.2, 0.4, 0.8 });
-
-		// 指定した範囲内にテキストを描く | Draw text within a specified area
-		font(U"Siv3D (シブスリーディー) は、ゲームやアプリを楽しく簡単な C++ コードで開発できるフレームワークです。")
-			.draw(18, Rect{ 20, 430, 480, 200 }, Palette::Black);
-
-		// 長方形を描く | Draw a rectangle
-		Rect{ 540, 20, 80, 80 }.draw();
-
-		// 角丸長方形を描く | Draw a rounded rectangle
-		RoundRect{ 680, 20, 80, 200, 20 }.draw(ColorF{ 0.0, 0.4, 0.6 });
-
-		// 円を描く | Draw a circle
-		Circle{ 580, 180, 40 }.draw(Palette::Seagreen);
-
-		// 矢印を描く | Draw an arrow
-		Line{ 540, 330, 760, 260 }.drawArrow(8, SizeF{ 20, 20 }, ColorF{ 0.4 });
-
-		// 半透明の円を描く | Draw a semi-transparent circle
-		Circle{ Cursor::Pos(), 40 }.draw(ColorF{ 1.0, 0.0, 0.0, 0.5 });
-
-		// ボタン | Button
-		if (SimpleGUI::Button(U"count: {}"_fmt(count), Vec2{ 520, 370 }, 120, (checked == false)))
+		for (accumulatedTime += deltaTime; StepTime <= accumulatedTime; accumulatedTime -= StepTime)
 		{
-			// カウントを増やす | Increase the count
-			++count;
+			// 2D 物理演算のワールドを更新する
+			world.update(StepTime);
 		}
 
-		// チェックボックス | Checkbox
-		SimpleGUI::CheckBox(checked, U"Lock \U000F033E", Vec2{ 660, 370 }, 120);
+		// 地面より下に落ちた物体は削除する
+		breads.remove_if([](const Bread& b) { return (200 < b.body.getPos().y); });
 
-		// スライダー | Slider
-		SimpleGUI::Slider(U"speed: {:.1f}"_fmt(speed), speed, 100, 400, Vec2{ 520, 420 }, 140, 120);
-
-		// 左キーが押されていたら | If left key is pressed
-		if (KeyLeft.pressed())
-		{
-			// プレイヤーが左に移動する | Player moves left
-			playerPosX = Max((playerPosX - speed * Scene::DeltaTime()), 60.0);
-			isPlayerFacingRight = false;
-		}
-
-		// 右キーが押されていたら | If right key is pressed
+		// 落下開始位置を右に移動します
 		if (KeyRight.pressed())
 		{
-			// プレイヤーが右に移動する | Player moves right
-			playerPosX = Min((playerPosX + speed * Scene::DeltaTime()), 740.0);
-			isPlayerFacingRight = true;
+			dropPos.x += speed * deltaTime;
 		}
 
-		// プレイヤーを描く | Draw the player
-		emoji.scaled(0.75).mirrored(isPlayerFacingRight).drawAt(playerPosX, 540);
+		// 落下開始位置を左に移動します
+		if (KeyLeft.pressed())
+		{
+			dropPos.x -= speed * deltaTime;
+		}
+
+		// 落下開始位置の移動範囲を制限します
+		dropPos.x = Clamp(dropPos.x, -200.0, 200.0);
+
+		// スペースを押したら
+		if (KeySpace.down())
+		{
+			// パンを生成
+			P2Body body = world.createPolygons(P2Dynamic, dropPos, plainBreadPolygon, P2Material{ .density = 0.1 });
+			breads << Bread{ body ,0 };
+		}
+
+		// 同じパン同士が衝突したら削除します
+		/*for (auto&& [pair, collision] : world.getCollisions())
+		{
+			if ()
+		}*/
+
+		// --------------------描画処理-------------------------
+
+		// 2D カメラを更新する
+		camera.update();
+		{
+			// 2D カメラから Transformer2D を作成する
+			const auto t = camera.createTransformer();
+
+			// 落下開始位置を描画する
+			Circle{ dropPos,10 }.draw(Palette::Pink);
+
+			// パンの level に応じて描画する
+			for (const auto& bread : breads)
+			{
+				switch (bread.level)
+				{
+				case 0:
+					plainBreadTexture.rotated(bread.body.getAngle()).drawAt(bread.body.getPos());
+					break;
+
+				case 1:
+					croissantTexture.rotated(bread.body.getAngle()).drawAt(bread.body.getPos());
+					break;
+
+				default:
+					break;
+				}
+			}
+
+			// ステージを描画する
+			stage.draw(Palette::Skyblue);
+		}
+
+		// 2D カメラの操作を描画する
+		camera.draw(Palette::Orange);
 	}
 }
-
-//
-// - Debug ビルド: プログラムの最適化を減らす代わりに、エラーやクラッシュ時に詳細な情報を得られます。
-//
-// - Release ビルド: 最大限の最適化でビルドします。
-//
-// - [デバッグ] メニュー → [デバッグの開始] でプログラムを実行すると、[出力] ウィンドウに詳細なログが表示され、エラーの原因を探せます。
-//
-// - Visual Studio を更新した直後は、プログラムのリビルド（[ビルド]メニュー → [ソリューションのリビルド]）が必要な場合があります。
-//
