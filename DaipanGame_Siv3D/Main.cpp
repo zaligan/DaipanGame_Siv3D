@@ -1,13 +1,16 @@
 ﻿# include <Siv3D.hpp>
 
+struct EmojiPolygon
+{
+	Texture texture;
+	MultiPolygon polygons;
+};
+
 /// @brief パンのクラスです。
 struct Bread
 {
 	/// @brief パンのボディです。
 	P2Body body;
-
-	/// @brief パンのIDです。
-	P2BodyID id;
 
 	/// @brief パンの種類です。
 	int32 level;
@@ -31,13 +34,13 @@ void Main()
 	P2World world{ Gravity };
 
 	// ステージのボディ (1辺 400 cm ）
-	const P2Body stage = world.createLineString(P2Static, Vec2{ 0, 0 }, { Vec2{-200, -400}, Vec2{-200, 0}, Vec2{200, 0}, {Vec2{200, -400}} });
+	const P2Body stage = world.createPolygon(P2Static, Vec2{ 0,0 }, Polygon{ Vec2{-300,0},Vec2{-300,-500},Vec2{-270,-500},Vec2{-270,-30}, Vec2{270,-30}, Vec2{270,-500}, Vec2{300,-500},Vec2{300,0}});
 
 	// ステージのボディID
 	const P2BodyID stageID = stage.id();
 
-	// パンの配列
-	Array<Bread> breads;
+	// パンのハッシュテーブル[ボディID, パン]
+	HashTable<P2BodyID, Bread> breads;
 
 	// パンの落下開始位置
 	Vec2 dropPos{ 0,-500 };
@@ -45,22 +48,42 @@ void Main()
 	// パンの落下開始位置の左右移動速度
 	double speed = 200.0;
 
+	// パンの落下クールタイム
+	double dropCoolTime = 1.0;
+
+	// パンの落下タイマー
+	double dropTimer = 0.0;
+
+	// BGMを読み込む
+	const Audio playBGM{ U"music/bgm/suikaGameBGM.mp3" };
+
 	// カメラの表示倍率です
 	double cameraScale = 1.0;
 
 	// 2D カメラ
 	Camera2D camera{ Vec2{ 0, -300 }, cameraScale, CameraControl::None_ };
 
-	// テクスチャからポリゴン生成
-	const Texture plainBreadTexture{ U"🍞"_emoji };
-	const MultiPolygon plainBreadPolygon = Emoji::CreateImage(U"🍞").alphaToPolygonsCentered().simplified(2.0);
+	// テクスチャとポリゴンの配列
+	Array<EmojiPolygon> emojiPolygons;
 
-	const Texture croissantTexture{ U"🥐"_emoji };
-	const MultiPolygon croissantPolygon = Emoji::CreateImage(U"🥐").alphaToPolygonsCentered().simplified(2.0);
+	// テクスチャとポリゴンを登録
+	emojiPolygons << EmojiPolygon{ Texture{ U"🍞"_emoji }, Emoji::CreateImage(U"🍞").alphaToPolygonsCentered().simplified(2.0) };
+	emojiPolygons << EmojiPolygon{ Texture{ U"🥐"_emoji }, Emoji::CreateImage(U"🥐").alphaToPolygonsCentered().simplified(2.0) };
+	emojiPolygons << EmojiPolygon{ Texture{ U"🥖"_emoji }, Emoji::CreateImage(U"🥖").alphaToPolygonsCentered().simplified(2.0) };
+	emojiPolygons << EmojiPolygon{ Texture{ U"🥨"_emoji }, Emoji::CreateImage(U"🥨").alphaToPolygonsCentered().simplified(2.0) };
+	emojiPolygons << EmojiPolygon{ Texture{ U"🥯"_emoji }, Emoji::CreateImage(U"🥯").alphaToPolygonsCentered().simplified(2.0) };
+	emojiPolygons << EmojiPolygon{ Texture{ U"🥪"_emoji }, Emoji::CreateImage(U"🥪").alphaToPolygonsCentered().simplified(2.0) };
+	emojiPolygons << EmojiPolygon{ Texture{ U"🥙"_emoji }, Emoji::CreateImage(U"🥙").alphaToPolygonsCentered().simplified(2.0) };
+	emojiPolygons << EmojiPolygon{ Texture{ U"🥚"_emoji }, Emoji::CreateImage(U"🥚").alphaToPolygonsCentered().simplified(2.0) };
+	emojiPolygons << EmojiPolygon{ Texture{ U"🍳"_emoji }, Emoji::CreateImage(U"🍳").alphaToPolygonsCentered().simplified(2.0) };
+	emojiPolygons << EmojiPolygon{ Texture{ U"🥘"_emoji }, Emoji::CreateImage(U"🥘").alphaToPolygonsCentered().simplified(2.0) };
 
 	// メインループ
 	while (System::Update())
 	{
+		// BGMを再生する
+		playBGM.play();
+
 		double deltaTime = Scene::DeltaTime();
 
 		for (accumulatedTime += deltaTime; StepTime <= accumulatedTime; accumulatedTime -= StepTime)
@@ -70,16 +93,22 @@ void Main()
 		}
 
 		// 地面より下に落ちた物体は削除する
-		breads.remove_if([](const Bread& b) { return (200 < b.body.getPos().y); });
+		for (auto& bread : breads)
+		{
+			if(200 < bread.second.body.getPos().y)
+			{
+				breads.erase(bread.first);
+			}
+		}
 
 		// 落下開始位置を右に移動します
-		if (KeyRight.pressed())
+		if (KeyRight.pressed() || KeyD.pressed())
 		{
 			dropPos.x += speed * deltaTime;
 		}
 
 		// 落下開始位置を左に移動します
-		if (KeyLeft.pressed())
+		if (KeyLeft.pressed() || KeyA.pressed())
 		{
 			dropPos.x -= speed * deltaTime;
 		}
@@ -87,21 +116,50 @@ void Main()
 		// 落下開始位置の移動範囲を制限します
 		dropPos.x = Clamp(dropPos.x, -200.0, 200.0);
 
+		dropTimer += deltaTime;
 		// スペースを押したら
-		if (KeySpace.down())
+		if (KeySpace.down() && dropCoolTime <= dropTimer)
 		{
+			dropTimer = 0.0;
 			// パンを生成
-			P2Body body = world.createPolygons(P2Dynamic, dropPos, plainBreadPolygon, P2Material{ .density = 0.1 });
-			breads << Bread{ body ,0 };
+			int32 randomLevel = Random(0, 2);
+			P2Body body = world.createPolygons(P2Dynamic, dropPos, emojiPolygons[randomLevel].polygons, P2Material{.density = 0.1});
+			breads.emplace(body.id(), Bread{ body,randomLevel });
 		}
 
 		// 同じパン同士が衝突したら削除します
-		/*for (auto&& [pair, collision] : world.getCollisions())
+		for (auto&& [pair, collision] : world.getCollisions())
 		{
-			if ()
-		}*/
+			// 衝突したペアがパン同士でなければ次のペアへ
+			if (not breads.contains(pair.a) || not breads.contains(pair.b))
+			{
+				continue;
+			}
 
-		// --------------------描画処理-------------------------
+			// パンのレベルが同じならば
+			if (breads[pair.a].level == breads[pair.b].level)
+			{
+				int32 newBreadLevel = breads[pair.a].level + 1;
+				Vec2 newBreadPos = (breads[pair.a].body.getPos() + breads[pair.b].body.getPos()) * 0.5;
+
+				// パンのレベルが最大の時は削除だけする
+				if (newBreadLevel != emojiPolygons.size())
+				{
+					// 新しいパンを生成する
+					P2Body body = world.createPolygons(P2Dynamic, newBreadPos, emojiPolygons[newBreadLevel].polygons, P2Material{ .density = 0.1 });
+					breads.emplace(body.id(), Bread{ body,newBreadLevel });
+				}
+
+				// 衝突したパンを削除する
+				breads.erase(pair.a);
+				breads.erase(pair.b);
+			}
+		}
+		
+
+		//// --------------------描画処理-------------------------
+
+		Rect{0,0,1280,720 }.draw(Arg::top = Palette::Floralwhite,Arg::bottom = Palette::Navajowhite);
 
 		// 2D カメラを更新する
 		camera.update();
@@ -115,26 +173,15 @@ void Main()
 			// パンの level に応じて描画する
 			for (const auto& bread : breads)
 			{
-				switch (bread.level)
-				{
-				case 0:
-					plainBreadTexture.rotated(bread.body.getAngle()).drawAt(bread.body.getPos());
-					break;
-
-				case 1:
-					croissantTexture.rotated(bread.body.getAngle()).drawAt(bread.body.getPos());
-					break;
-
-				default:
-					break;
-				}
+				emojiPolygons[bread.second.level].texture.rotated(bread.second.body.getAngle()).drawAt(bread.second.body.getPos());
 			}
 
 			// ステージを描画する
-			stage.draw(Palette::Skyblue);
+			stage.draw(Palette::Black);
 		}
-
 		// 2D カメラの操作を描画する
 		camera.draw(Palette::Orange);
+
+		
 	}
 }
